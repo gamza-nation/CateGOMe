@@ -197,7 +197,7 @@ def _similarity_topk_for_term(vs: FAISS, embeddings: OpenAIEmbeddings, term: str
     )
     return retriever.invoke(term)
 
-def _get_term_info_via_llm(llm: ChatOpenAI, user_query: str, num_related_terms: int = 4) -> List[Dict[str, Any]]:
+def _get_term_info_via_llm(llm: ChatOpenAI, user_query: str, num_related_terms: int = 3) -> List[Dict[str, Any]]:
     """
     LLM을 호출하여 사용자 쿼리에서 핵심 품목명들을 추출하고, 각 품목명에 대한 설명과 관련 용어를 받습니다.
     안정적인 JSON 추출을 위해 프롬프트와 파싱 로직이 강화되었습니다.
@@ -293,7 +293,7 @@ def search_classification_codes(
     user_query: str,
     all_docs_from_vs: Dict[str, List[Document]],  # 파라미터
     sim_topk_per_term: int = 3,  # 유사도 검색 결과 개수
-    num_related_terms: int = 4  # LLM 관련 용어 개수
+    num_related_terms: int = 3  # LLM 관련 용어 개수
 ) -> Dict[str, Any]:
     """
     사용자 쿼리에 대해 분류 코드를 검색합니다.
