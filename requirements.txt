@@ -1,0 +1,24 @@
+# requirements.txt (권장안)
+
+# Streamlit
+streamlit>=1.35,<1.41
+
+# Data
+pandas>=2.2.2
+Pillow>=10.3
+
+# Google Gemini SDK (신규 라인이 의존성 충돌 적음)
+google-generativeai>=0.6.0
+
+# OpenAI & LangChain (pydantic v2 계열 일괄 정렬)
+openai>=1.40.0
+tiktoken>=0.7.0
+
+langchain>=0.2.12
+langchain-community>=0.2.8
+langchain-core>=0.2.36
+langchain-openai>=0.1.9
+
+# FAISS: py3.12/3.13용 manylinux 휠 제공 라인
+faiss-cpu>=1.8.0
+chardet
