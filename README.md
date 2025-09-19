@@ -1,4 +1,4 @@
-# 🤖 CateGOMe (카테고미) - 가계동향조사 항목 자동분류 AI
+# CateGOMe (카테고미) - 가계동향조사 항목 자동분류 AI
 
 <div align="center">
   <img src="assets/CateGOMe_kor.png" width="420" alt="CateGOMe Logo">
