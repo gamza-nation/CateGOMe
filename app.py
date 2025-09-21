@@ -95,7 +95,7 @@ def initialize_system():
             result = chardet.detect(f.read())
             encoding = result['encoding']
         
-        _df = pd.read_csv(CSV_PATH, encoding=encoding)
+        _df = pd.read_csv(CSV_PATH, encoding=encoding, dtype={'입력코드':str})
         missing = [c for c in REQUIRED_COLS if c not in _df.columns]
         if missing:
             raise KeyError(f"ERROR[csv]: Missing required columns: {missing}")
@@ -132,7 +132,7 @@ def _short_doc_from_row(row: pd.Series) -> Document:
     source = row.get('출처', '항목분류집')
     source_info = f"출처: {source}\n"
 
-    core_fields_order = [col for col in ["입력코드", "항목명", "항목분류내용", "처리코드", "포함항목", "제외항목"] if col in row.index]
+    core_fields_order = [col for col in ["입력코드", "구분", "항목명", "항목분류내용", "처리코드", "포함항목", "제외항목", "출처"] if col in row.index]
 
     core_lines = []
     for col in core_fields_order:
@@ -140,12 +140,7 @@ def _short_doc_from_row(row: pd.Series) -> Document:
 
         # '입력코드' 컬럼일 경우, 정수로 변환을 시도
         if col == "입력코드":
-            try:
-                # float으로 먼저 변환 후 int로 변환하여 "720.0" 같은 문자열도 처리
-                value_str = str(int(float(value)))
-            except (ValueError, TypeError):
-                # 변환 실패 시 (예: NaN, 비숫자 문자열) 원본 값을 그대로 사용
-                value_str = str(value)
+            value_str = str(value).strip()
         else:
             value_str = str(value)
         # ============================
@@ -178,6 +173,42 @@ def _keyword_search(df: pd.DataFrame, term: str) -> List[Document]:
     sub = sub.drop_duplicates(subset=["_rowid"], keep="first")
     return [_short_doc_from_row(r) for _, r in sub.iterrows()]
 
+def create_extended_code_map(df):
+    """범위형 코드를 개별 코드로 확장하여 매핑 (우선순위: 이산형 > 범위형)"""
+    code_map = {}
+    
+    # 1단계: 범위형 먼저 처리 (낮은 우선순위)
+    for _, row in df[df['입력코드'].str.contains('-', na=False)].iterrows():
+        input_code = str(row['입력코드']).strip()
+        item_name = row['항목명']
+        
+        parts = input_code.split('-')
+        if len(parts) == 2:
+            try:
+                start_num = int(parts[0].strip())
+                end_num = int(parts[1].strip())
+                
+                # 범위 내 모든 코드를 매핑
+                for num in range(start_num, end_num + 1):
+                    code_str = f"{num:04d}"
+                    code_map[code_str] = item_name
+            except:
+                pass
+        
+        # 범위 표현 자체도 저장
+        code_map[input_code] = item_name
+    
+    # 2단계: 이산형 나중에 처리 (높은 우선순위 - 덮어쓰기)
+    for _, row in df[~df['입력코드'].str.contains('-', na=False)].iterrows():
+        input_code = str(row['입력코드']).strip()
+        item_name = row['항목명']
+        
+        # 이산형은 무조건 덮어쓰기 (같은 코드 여러 행 있어도 같은 항목명이므로 OK)
+        code_map[input_code] = item_name
+    
+    return code_map
+    
+
 
 def _keyword_search_on_docs(docs: List[Document], term: str) -> List[Document]:
     """메모리에 로드된 Document 객체 리스트에서 직접 키워드 검색을 수행합니다."""
@@ -197,7 +228,7 @@ def _similarity_topk_for_term(vs: FAISS, embeddings: OpenAIEmbeddings, term: str
     )
     return retriever.invoke(term)
 
-def _get_term_info_via_llm(llm: ChatOpenAI, user_query: str, num_related_terms: int = 3) -> List[Dict[str, Any]]:
+def _get_term_info_via_llm(llm: ChatOpenAI, user_query: str, num_related_terms: int = 4) -> List[Dict[str, Any]]:
     """
     LLM을 호출하여 사용자 쿼리에서 핵심 품목명들을 추출하고, 각 품목명에 대한 설명과 관련 용어를 받습니다.
     안정적인 JSON 추출을 위해 프롬프트와 파싱 로직이 강화되었습니다.
@@ -293,7 +324,7 @@ def search_classification_codes(
     user_query: str,
     all_docs_from_vs: Dict[str, List[Document]],  # 파라미터
     sim_topk_per_term: int = 3,  # 유사도 검색 결과 개수
-    num_related_terms: int = 3  # LLM 관련 용어 개수
+    num_related_terms: int = 4  # LLM 관련 용어 개수
 ) -> Dict[str, Any]:
     """
     사용자 쿼리에 대해 분류 코드를 검색합니다.
@@ -387,6 +418,12 @@ def search_classification_codes(
 # prompt_template_single
 prompt_template_single = PromptTemplate.from_template("""
     SYSTEM: 당신은 **가계부로부터 추출된** 주어진 데이터를 분석하여 가장 적합한 '입력코드'와 '항목명'을 추론하는, 극도로 꼼꼼하고 규칙을 엄수하는 데이터 분류 AI이며, 당신의 이름은 "카테고미(CateGOMe)"입니다. 당신의 답변은 반드시 지정된 JSON 형식이어야 합니다.
+
+    ## 입력코드 형식 참고사항 ##
+    1, 입력코드는 단일값(예: 120, 3610) 또는 범위값(예: 0110-0120)으로 되어 있습니다.
+    2. 범위값의 경우, 해당 범위에 포함되는 개별 코드도 유효합니다.
+    3. 예: '0110-0120' 범위에는 0110, 0111, ..., 0119, 0120이 모두 포함됩니다.
+    4. 앞자리 0은 유지해서 반환해주세요 (예: 0120 그대로 사용)
     
     ## 절대 규칙 (가장 중요! 반드시 따를 것) ##
     1. **수입/지출 규칙:** `question`의 `expense` 값이 0보다 크면, `input_code`는 **절대로 1000 미만이 될 수 없습니다.** 반대로 `income` 값이 0보다 크면, `input_code`는 **절대로 1000 이상이 될 수 없습니다.** 예외는 없습니다.
@@ -809,8 +846,9 @@ JSON 스키마:
         progress.progress(30, f"✅ {len(items)}개 품목 발견")
 
         # 코드→항목명 맵
-        _df['입력코드_str'] = _df['입력코드'].astype(str).str.replace(r'\.0$', '', regex=True)
-        code_to_name_map = pd.Series(_df.항목명.values, index=_df.입력코드_str).to_dict()
+        # _df['입력코드_str'] = _df['입력코드'].astype(str).str.replace(r'\.0$', '', regex=True)
+        # code_to_name_map = pd.Series(_df.항목명.values, index=_df.입력코드_str).to_dict()
+        code_to_name_map = create_extended_code_map(_df)
 
         # 벡터스토어 문서 메모리 로드
         all_docs_from_vs = {name: list(vs.docstore._dict.values()) for name, vs in _vectorstores.items()}
@@ -860,7 +898,10 @@ JSON 스키마:
                 elif ctype == "AMBIGUOUS":
                     cands = llm.get("candidates", [])
                     for c in cands:
-                        c["항목명"] = code_to_name_map.get(str(c.get("input_code","")).strip(), "항목명 없음")
+                        candidate_code = str(c.get("input_code","")).strip()
+                        item_name = code_to_name_map.get(candidate_code, "항목명 없음")
+                        c["항목명"] = item_name
+                        # c["항목명"] = code_to_name_map.get(str(c.get("input_code","")).strip(), "항목명 없음")
                     ambiguous_results.append({
                         "품목명": pname, "수입": income_list[i], "지출": expense_list[i],
                         "모호성 이유": llm.get("reason_for_ambiguity","N/A"),
