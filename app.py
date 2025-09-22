@@ -9,7 +9,7 @@ GENAI_API_KEY = st.secrets["GENAI_API_KEY"]
 
 # --- Global (1회 로드 캐시) ----------------------------------------------------
 EMBED_MODEL = "text-embedding-3-large"
-LLM_MODEL = "gpt-4o-mini"  # 통합 모델명 변수 사용
+LLM_MODEL = "gpt-4o"  # 통합 모델명 변수 사용
 
 VECTORSTORE_DIR_CASES = "vectorstores/cases"
 INDEX_NAME_CASES = "cases_index"
@@ -105,7 +105,7 @@ def initialize_system():
         # LLM 모델도 캐시
         _llm_model = ChatOpenAI(
             model_name=LLM_MODEL,
-            temperature=0.1,
+            temperature=0.0,
             openai_api_key=OPENAI_API_KEY
         )
 
@@ -219,7 +219,7 @@ def _keyword_search_on_docs(docs: List[Document], term: str) -> List[Document]:
     return [doc for doc in docs if term.lower() in doc.page_content.lower()]
 
 
-def _similarity_topk_for_term(vs: FAISS, embeddings: OpenAIEmbeddings, term: str, k: int = 3) -> List[Document]:
+def _similarity_topk_for_term(vs: FAISS, embeddings: OpenAIEmbeddings, term: str, k: int = 5) -> List[Document]:
     if vs is None or embeddings is None:  # 초기화 실패 시
         return []
     retriever = vs.as_retriever(
@@ -236,6 +236,13 @@ def _get_term_info_via_llm(llm: ChatOpenAI, user_query: str, num_related_terms: 
     if llm is None:
         return []
 
+    # 이 함수에서만 gpt-4o 모델 사용
+    gpt_llm = ChatOpenAI(
+        model_name="gpt-4o",
+        temperature=0.0,
+        openai_api_key=OPENAI_API_KEY
+    )
+    
     # === 품목 설명 및 관련어 반환 프롬프트 ===
     prompt = f"""
 너는 **사용자의 가계부에서 추출된 정보**로 구성된 쿼리에서 'product_name' 리스트에 포함된 모든 품목명을 분석하고, 오탈자를 교정한 뒤 검색에 유용한 정보를 추출하는 전문가 AI이다.
@@ -243,7 +250,7 @@ def _get_term_info_via_llm(llm: ChatOpenAI, user_query: str, num_related_terms: 
 
 ## 작업 절차 (반드시 순서대로 따를 것) ##
 1. **품목명 추출:** `product_name = [...]` 리스트에 있는 모든 원본 품목명을 빠짐없이 추출한다.
-2. **오탈자 교정:** 각 원본 품목명의 오탈자나 불분명한 표현을 가장 자연스럽고 일반적인 표현으로 수정한다(예: "파플리시티" -> "퍼플렉시티", "수차비" -> "주차비" 등). 만약 수정할 필요가 없다면 원본을 그대로 사용한다.
+2. **오탈자 교정:** 각 원본 품목명의 오탈자나 불분명한 표현을 가장 자연스럽고 일반적인 표현으로 수정한다(예: "색지피티" -> "챗지피티", "파플리시티" -> "퍼플렉시티", "수차비" -> "주차비" 등). 만약 수정할 필요가 없다면 원본을 그대로 사용한다.
 3. **설명 생성:** **수정된 품목명**에 대해, 그 품목의 본질과 목적을 2~3 문장으로 간결하게 설명한다.
 4. **관련 용어 추출 (매우 중요):**
    - **수정된 품목명**과 **네가 작성한 설명**을 모두 참고하여, 검색에 가장 중요하다고 판단되는 핵심 관련 용어를 {num_related_terms}개 추출한다.
@@ -287,7 +294,7 @@ def _get_term_info_via_llm(llm: ChatOpenAI, user_query: str, num_related_terms: 
 """
 
     try:
-        res = llm.invoke(prompt)
+        res = gpt_llm.invoke(prompt)
         text_content = res.content.strip()
 
         json_match = re.search(r'\{.*\}', text_content, re.DOTALL)
@@ -323,7 +330,7 @@ def _get_term_info_via_llm(llm: ChatOpenAI, user_query: str, num_related_terms: 
 def search_classification_codes(
     user_query: str,
     all_docs_from_vs: Dict[str, List[Document]],  # 파라미터
-    sim_topk_per_term: int = 3,  # 유사도 검색 결과 개수
+    sim_topk_per_term: int = 5,  # 유사도 검색 결과 개수
     num_related_terms: int = 3  # LLM 관련 용어 개수
 ) -> Dict[str, Any]:
     """
@@ -420,10 +427,10 @@ prompt_template_single = PromptTemplate.from_template("""
     SYSTEM: 당신은 **가계부로부터 추출된** 주어진 데이터를 분석하여 가장 적합한 '입력코드'와 '항목명'을 추론하는, 극도로 꼼꼼하고 규칙을 엄수하는 데이터 분류 AI이며, 당신의 이름은 "카테고미(CateGOMe)"입니다. 당신의 답변은 반드시 지정된 JSON 형식이어야 합니다.
 
     ## 입력코드 형식 참고사항 ##
-    1, 입력코드는 단일값(예: '0120', '3610') 또는 범위값(예: '0110-0120')으로 되어 있습니다.
+    1, 입력코드는 단일값(예: "0120", "3610") 또는 범위값(예: "0110-0120")으로 되어 있습니다.
     2. 범위값의 경우, 해당 범위에 포함되는 개별 코드도 유효합니다.
-    3. 예: '0110-0120' 범위에는 '0110', '0111', ..., '0119', '0120'이 모두 포함됩니다.
-    4. 앞자리 '0'은 유지해서 반환해주세요 (예: '0120' 그대로 사용)
+    3. 예: "0110-0120" 범위에는 "0110", "0111", ..., "0119", "0120"이 모두 포함됩니다.
+    4. 앞자리 "0"은 유지해서 반환해주세요 (예: "0120" 그대로 사용)
     
     ## 절대 규칙 (가장 중요! 반드시 따를 것) ##
     1. **수입/지출 규칙:** `question`의 `expense` 값이 0보다 크면, `input_code`는 **절대로 1000 미만이 될 수 없습니다.** 반대로 `income` 값이 0보다 크면, `input_code`는 **절대로 1000 이상이 될 수 없습니다.** 예외는 없습니다.
@@ -862,7 +869,7 @@ JSON 스키마:
             progress.progress(30 + int(60 * (i + 1) / total), f"🔍 분류 중... ({i+1}/{total}) - {pname_orig}")
 
             q_single = f"product_name = ['{pname_orig}'], income = [{income_list[i]}], expense = [{expense_list[i]}]"
-            search_output = search_classification_codes(q_single, all_docs_from_vs, sim_topk_per_term=3, num_related_terms=3)
+            search_output = search_classification_codes(q_single, all_docs_from_vs, sim_topk_per_term=5, num_related_terms=3)
             pname = (search_output.get("extracted_terms_info") or [{"term": pname_orig}])[0]["term"]
 
             if "error" in search_output or not search_output["context_docs"]:
