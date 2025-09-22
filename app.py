@@ -9,7 +9,7 @@ GENAI_API_KEY = st.secrets["GENAI_API_KEY"]
 
 # --- Global (1회 로드 캐시) ----------------------------------------------------
 EMBED_MODEL = "text-embedding-3-large"
-LLM_MODEL = "gpt-4o"  # 통합 모델명 변수 사용
+LLM_MODEL = "gpt-4o-mini"  # 통합 모델명 변수 사용
 
 VECTORSTORE_DIR_CASES = "vectorstores/cases"
 INDEX_NAME_CASES = "cases_index"
@@ -228,7 +228,7 @@ def _similarity_topk_for_term(vs: FAISS, embeddings: OpenAIEmbeddings, term: str
     )
     return retriever.invoke(term)
 
-def _get_term_info_via_llm(llm: ChatOpenAI, user_query: str, num_related_terms: int = 4) -> List[Dict[str, Any]]:
+def _get_term_info_via_llm(llm: ChatOpenAI, user_query: str, num_related_terms: int = 3) -> List[Dict[str, Any]]:
     """
     LLM을 호출하여 사용자 쿼리에서 핵심 품목명들을 추출하고, 각 품목명에 대한 설명과 관련 용어를 받습니다.
     안정적인 JSON 추출을 위해 프롬프트와 파싱 로직이 강화되었습니다.
@@ -324,7 +324,7 @@ def search_classification_codes(
     user_query: str,
     all_docs_from_vs: Dict[str, List[Document]],  # 파라미터
     sim_topk_per_term: int = 3,  # 유사도 검색 결과 개수
-    num_related_terms: int = 4  # LLM 관련 용어 개수
+    num_related_terms: int = 3  # LLM 관련 용어 개수
 ) -> Dict[str, Any]:
     """
     사용자 쿼리에 대해 분류 코드를 검색합니다.
@@ -420,7 +420,7 @@ prompt_template_single = PromptTemplate.from_template("""
     SYSTEM: 당신은 **가계부로부터 추출된** 주어진 데이터를 분석하여 가장 적합한 '입력코드'와 '항목명'을 추론하는, 극도로 꼼꼼하고 규칙을 엄수하는 데이터 분류 AI이며, 당신의 이름은 "카테고미(CateGOMe)"입니다. 당신의 답변은 반드시 지정된 JSON 형식이어야 합니다.
 
     ## 입력코드 형식 참고사항 ##
-    1, 입력코드는 단일값(예: 120, 3610) 또는 범위값(예: 0110-0120)으로 되어 있습니다.
+    1, 입력코드는 단일값(예: 0120, 3610) 또는 범위값(예: 0110-0120)으로 되어 있습니다.
     2. 범위값의 경우, 해당 범위에 포함되는 개별 코드도 유효합니다.
     3. 예: '0110-0120' 범위에는 0110, 0111, ..., 0119, 0120이 모두 포함됩니다.
     4. 앞자리 0은 유지해서 반환해주세요 (예: 0120 그대로 사용)
@@ -646,6 +646,8 @@ st.markdown(f"""
 st.session_state.setdefault("results", None)        # 전체 결과 캐시
 st.session_state.setdefault("last_file_name", None) # 업로드 파일 변경 감지
 st.session_state.setdefault("manual_input", [])  # 수동 입력 데이터
+st.session_state.setdefault("uploader_key", 0)      # 파일 업로더 초기화용 카운터
+st.session_state.setdefault("input_key_nonce", 0)   # 직접 입력 필드 초기화용 카운터
 
 # === 업로더 ===
 st.markdown("### 📷 이미지 업로드")
@@ -653,7 +655,7 @@ uploaded_file = st.file_uploader(
     "가계부 이미지를 업로드해주세요.",
     type=['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'tiff'],
     help="드래그 앤 드롭 또는 클릭하여 파일 선택",
-    key="main_uploader_v3",
+    key=f"main_uploader_v3_{st.session_state['uploader_key']}",
 )
 
 # 파일 바뀌면 결과 초기화
@@ -682,7 +684,7 @@ for i in range(5):
     with cols[0]:
         name = st.text_input(
             f"품목 {i+1}", 
-            key=f"name_{i}", 
+            key=f"name_{st.session_state['input_key_nonce']}_{i}",
             placeholder=f"품목 {i+1}",
             label_visibility="collapsed"
         )
@@ -690,7 +692,7 @@ for i in range(5):
         income = st.number_input(
             f"수입 {i+1}", 
             min_value=0,
-            key=f"income_{i}",
+            key=f"income_{st.session_state['input_key_nonce']}_{i}",
             label_visibility="collapsed"
             # value=0 제거
         )
@@ -698,7 +700,7 @@ for i in range(5):
         expense = st.number_input(
             f"지출 {i+1}", 
             min_value=0,
-            key=f"expense_{i}",
+            key=f"expense_{st.session_state['input_key_nonce']}_{i}",
             label_visibility="collapsed"
             # value=0 제거
         )
@@ -721,27 +723,26 @@ if manual_items:
 can_process = uploaded_file is not None or len(manual_items) > 0
 
 def reset_app_state():
-    # 수동 입력 필드 초기화
-    for i in range(5):
-        if f"name_{i}" in st.session_state:
-            del st.session_state[f"name_{i}"]
-        if f"income_{i}" in st.session_state:
-            del st.session_state[f"income_{i}"]
-        if f"expense_{i}" in st.session_state:
-            del st.session_state[f"expense_{i}"]
-    
-    # 결과 및 파일 업로드 상태 초기화
-    st.session_state["results"] = None
-    st.session_state["last_file_name"] = None
-    st.session_state["manual_items"] = []
-    
-    # 파일 업로더 위젯 자체를 리셋
-    if 'main_uploader_v3' in st.session_state:
-        del st.session_state['main_uploader_v3']
-    
-    # 페이지 새로고침
-    st.rerun()
+    # 1) 결과/메타 상태 제거
+    for k in ["results", "manual_items", "last_file_name"]:
+        st.session_state.pop(k, None)
 
+    # 2) 업로더 리셋: key 카운터 증가 → 위젯 재마운트로 파일 비우기
+    st.session_state["uploader_key"] = st.session_state.get("uploader_key", 0) + 1
+
+    # 3) 직접 입력 리셋: key 카운터 증가 → 위젯 재마운트로 타이핑 값 비우기
+    st.session_state["input_key_nonce"] = st.session_state.get("input_key_nonce", 0) + 1
+
+    # 4) (선택) 흔적 청소: 이전 name_/income_/expense_ 키들 제거
+    #    - 안 해도 동작엔 문제 없지만, 세션 오염 최소화 목적
+    for k in list(st.session_state.keys()):
+        if re.match(r"^(name|income|expense)_\d+(_\d+)?$", k):
+            st.session_state.pop(k, None)
+    st.session_state.pop("uploaded_image_v3", None)
+
+    # 5) 즉시 UI 반영
+    # st.rerun()
+    
 # ----------------------------------------------------------
 # 버튼 활성화 조건: 이미지 OR 수동입력이 있으면 활성화
 # ----------------------------------------------------------
@@ -755,7 +756,7 @@ if can_process:
         run = st.button("🚀 분류 시작", type="primary", use_container_width=True, key="run_btn_v3")
     with R_COL:
         # on_click에 위에서 정의한 콜백 함수 연결 (이제 함수가 위에 정의되어 있으므로 정상 작동)
-        st.button("🔄 초기화", use_container_width=True, on_click=reset_app_state)
+        st.button("초기화", on_click=reset_app_state, key="reset_button_v3", use_container_width=True)
 
     # ======================================================
     # 파이프라인 실행: "if run" 블록은 버튼 정의 바로 다음에 위치
@@ -861,14 +862,14 @@ JSON 스키마:
             progress.progress(30 + int(60 * (i + 1) / total), f"🔍 분류 중... ({i+1}/{total}) - {pname_orig}")
 
             q_single = f"product_name = ['{pname_orig}'], income = [{income_list[i]}], expense = [{expense_list[i]}]"
-            search_output = search_classification_codes(q_single, all_docs_from_vs, sim_topk_per_term=3, num_related_terms=4)
+            search_output = search_classification_codes(q_single, all_docs_from_vs, sim_topk_per_term=3, num_related_terms=3)
             pname = (search_output.get("extracted_terms_info") or [{"term": pname_orig}])[0]["term"]
 
             if "error" in search_output or not search_output["context_docs"]:
                 failed_results.append({"품목명": pname, "수입": income_list[i], "지출": expense_list[i], "실패 이유": "검색 결과 없음"})
                 continue
 
-            context = "\n\n---\n\n".join([d.page_content for d in search_output["context_docs"]])
+            context = "\n\n---\n\n".join([doc.page_content for doc in search_output["context_docs"]])
             context = context.replace("출처: cases", "출처: 조사사례집").replace("출처: classification", "출처: 항목분류집")
             extra_info = "\n\n".join(format_extra(t) for t in search_output.get("extracted_terms_info", []))
 
