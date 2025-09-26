@@ -783,7 +783,7 @@ if can_process:
                 try:
                     img = Image.open(uploaded_file).convert("RGB")
                     # gemini_model = genai.GenerativeModel("gemini-1.5-flash")
-                    gemini_model = genai.GenerativeModel("gemini-2.0-flash")          
+                    gemini_model = genai.GenerativeModel("gemini-2.0-flash")
                     
                     prompt = """
 가계부 사진에서 표를 인식해서 각 행의
