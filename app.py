@@ -782,7 +782,8 @@ if can_process:
                 progress.progress(20, "📸 이미지에서 텍스트 추출 중...")
                 try:
                     img = Image.open(uploaded_file).convert("RGB")
-                    gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+                    # gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+                    gemini_model = genai.GenerativeModel("gemini-2.0-flash")          
                     
                     prompt = """
 가계부 사진에서 표를 인식해서 각 행의
