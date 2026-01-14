@@ -1,18 +1,6 @@
 # ========================================
 # 🔧 설정값
 # ========================================
-import subprocess
-import sys
-
-def install(package):
-    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-
-try:
-    from langchain.prompts import PromptTemplate
-except ImportError:
-    install('langchain')
-    install('langchain-community')
-    from langchain.prompts import PromptTemplate
 
 import streamlit as st
 
@@ -47,7 +35,7 @@ import pandas as pd
 from PIL import Image
 import google.generativeai as genai
 
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from langchain.docstore.document import Document
 from langchain_core.output_parsers import StrOutputParser
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
