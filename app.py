@@ -1,6 +1,19 @@
 # ========================================
 # 🔧 설정값
 # ========================================
+import subprocess
+import sys
+
+def install(package):
+    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+
+try:
+    from langchain.prompts import PromptTemplate
+except ImportError:
+    install('langchain')
+    install('langchain-community')
+    from langchain.prompts import PromptTemplate
+
 import streamlit as st
 
 # API Key 설정 (Streamlit secrets 사용)
